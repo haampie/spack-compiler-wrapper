@@ -98,36 +98,41 @@ static enum executable_t compiler_type(const char *filename) {
     return SPACK_NONE;
 }
 
-const char * override_path(enum executable_t type) {
-    char *path;
-    char *var;
+static const char * get_spack_variable(enum executable_t type) {
     switch (type) {
     case SPACK_CC:
-        var ="SPACK_CC";
-        break;
+        return "SPACK_CC";
     case SPACK_CXX:
-        var ="SPACK_CXX";
-        break;
+        return "SPACK_CXX";
     case SPACK_FC:
-        var ="SPACK_FC";
-        break;
+        return "SPACK_FC";
     case SPACK_F77:
-        var ="SPACK_F77";
-        break;
+        return "SPACK_F77";
     case SPACK_LD:
-        var ="SPACK_LD";
-        break;
+        return "SPACK_LD";
     }
-    path = getenv(var);
+    return NULL;
+}
+
+static const char * override_path(enum executable_t type) {
+    char const *var = get_spack_variable(type);
+    char const *path = getenv(var);
     if (path) return path;
-    fprintf(stderr, "%s is not set\n", var);
+    fprintf(stderr, "%s not set\n", var);
     exit(1);
 }
 
+int execve(const char *path, char *const *argv, char *const *envp) {
+  enum executable_t type = compiler_type(get_filename(path));
+  if (type != SPACK_NONE) path = override_path(type);
+  typeof(execve) *real = dlsym(RTLD_NEXT, "execve");
+  return real(path, argv, envp);
+}
+
+
 int execvpe(const char *file, char *const *argv, char *const *envp) {
   enum executable_t type = compiler_type(get_filename(file));
-  if (type != SPACK_NONE)
-    file = override_path(type);
+  if (type != SPACK_NONE) file = override_path(type);
 
   for (int i = 0; envp[i]; i++)
     putenv(envp[i]);
@@ -136,21 +141,12 @@ int execvpe(const char *file, char *const *argv, char *const *envp) {
   return real(file, argv, environ);
 }
 
-int execve(const char *path, char *const *argv, char *const *envp) {
-  enum executable_t type = compiler_type(get_filename(path));
-  if (type != SPACK_NONE)
-    path = override_path(type);
-  typeof(execve) *real = dlsym(RTLD_NEXT, "execve");
-  return real(path, argv, envp);
-}
-
 int posix_spawn(pid_t *pid, const char *path,
                 const posix_spawn_file_actions_t *file_actions,
                 const posix_spawnattr_t *attrp,
                 char *const *argv, char *const *envp) {
   enum executable_t type = compiler_type(get_filename(path));
-  if (type != SPACK_NONE)
-    path = override_path(type);
+  if (type != SPACK_NONE) path = override_path(type);
   typeof(posix_spawn) *real = dlsym(RTLD_NEXT, "posix_spawn");
   return real(pid, path, file_actions, attrp, argv, envp);
 }

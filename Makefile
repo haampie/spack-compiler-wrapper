@@ -1,5 +1,7 @@
 .PHONY: all clean
 
+-include Make.user
+
 CFLAGS ?= -fPIC
 
 all: spack-compiler-wrapper.so
