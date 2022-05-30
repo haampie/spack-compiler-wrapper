@@ -13,8 +13,16 @@ Example:
 ```console
 $ make
 $ echo 'int main(){return 0;}' > example.c
-$ echo 'gcc -v -Wl,-v example.c' > build.sh
+$ echo '#!/bin/sh' > build.sh
+$ echo '/usr/bin/gcc -v -Wl,-v example.c' >> build.sh
 $ chmod +x build.sh
-$ ./build.sh # builds with gcc and ld as expected
-$ SPACK_CC=/usr/bin/clang SPACK_LD=/usr/bin/ld.lld LD_PRELOAD=$PWD/spack-compiler-wrapper.so ./build.sh # builds with clang and lld instead.
+
+# Builds with gcc and ld as expected
+$ ./build.sh
+
+# Builds with clang and lld instead
+$ export SPACK_CC=/usr/bin/clang
+$ export SPACK_LD=/usr/bin/ld.lld
+$ export LD_PRELOAD=$PWD/spack-compiler-wrapper.so
+$ ./build.sh
 ```
