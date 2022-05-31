@@ -2,15 +2,16 @@
 
 -include Make.user
 
-CFLAGS ?= -fPIC
+SPACK_CFLAGS = -fPIC -fvisibility=hidden
+SPACK_LDFLAGS = -Wl,--version-script=./spack-compiler-wrapper.version
 
 all: spack-compiler-wrapper.so
 
 spack-compiler-wrapper.o: spack-compiler-wrapper.c
-	$(CC) $(CFLAGS) -c $<
+	$(CC) $(CFLAGS) $(SPACK_CFLAGS) -c $<
 
 spack-compiler-wrapper.so: spack-compiler-wrapper.o
-	$(CC) $(LDFLAGS) -shared -o $@ $< -ldl
+	$(CC) $(LDFLAGS) $(SPACK_LDFLAGS) -shared -o $@ $< -ldl
 
 clean:
 	rm -f *.o *.so

@@ -18,14 +18,14 @@ enum executable_t {
 };
 
 // SPACK_CC
-const char * spack_cc[] = {
+static const char * spack_cc[] = {
     "cc", "c89", "c99", "gcc", "clang",
     "armclang", "icc", "icx", "pgcc", "nvc",
     "xlc", "xlc_r", "fcc", "amdclang"
 };
 
 // SPACK_CXX
-const char * spack_cxx[] = {
+static const char * spack_cxx[] = {
     "c++", "CC", "g++", "clang++",
     "armclang++", "icpc", "icpx",
     "dpcpp", "pgc++", "nvc++", "xlc++",
@@ -33,7 +33,7 @@ const char * spack_cxx[] = {
 };
 
 // SPACK_FC
-const char * spack_fc[] = {
+static const char * spack_fc[] = {
     "ftn", "f90", "fc", "f95", "gfortran",
     "flang", "armflang", "ifort", "ifx",
     "pgfortran", "nvfortran", "xlf90",
@@ -41,12 +41,12 @@ const char * spack_fc[] = {
 };
 
 // SPACK_F77
-const char * spack_f77[] = {
+static const char * spack_f77[] = {
     "f77", "xlf", "xlf_r", "pgf77", "amdflang"
 };
 
 // SPACK_LD
-const char * spack_ld[] = {
+static const char * spack_ld[] = {
     "ld", "ld.gold", "ld.lld", "ld.bfd", "ld.mold"
 };
 
@@ -193,6 +193,7 @@ static void compiler_wrapper(char *const * argv, enum executable_t type) {
 
 // The exec* + posix_spawn calls we wrap
 
+__attribute__ ((visibility ("default"))) 
 int execve(const char *path, char *const *argv, char *const *envp) {
     printf("Intercepting %s\n", path);
     //for (size_t i = 0; envp[i] != NULL; ++i) {
@@ -208,6 +209,7 @@ int execve(const char *path, char *const *argv, char *const *envp) {
 }
 
 
+__attribute__ ((visibility ("default"))) 
 int execvpe(const char *file, char *const *argv, char *const *envp) {
     printf("Intercepting %s\n", file);
     enum executable_t type = compiler_type(get_filename(file));
@@ -223,6 +225,7 @@ int execvpe(const char *file, char *const *argv, char *const *envp) {
     return real(file, argv, environ);
 }
 
+__attribute__ ((visibility ("default")))
 int posix_spawn(pid_t *pid, const char *path,
                 const posix_spawn_file_actions_t *file_actions,
                 const posix_spawnattr_t *attrp,
@@ -236,6 +239,7 @@ int posix_spawn(pid_t *pid, const char *path,
 
 // Fallback to execve / execvpe
 
+__attribute__ ((visibility ("default"))) 
 int execl(const char *path, const char *arg0, ...) {
     va_list ap;
     va_start(ap, arg0);
@@ -245,6 +249,7 @@ int execl(const char *path, const char *arg0, ...) {
     return execve(path, argv, environ);
 }
 
+__attribute__ ((visibility ("default"))) 
 int execlp(const char *file, const char *arg0, ...) {
     va_list ap;
     va_start(ap, arg0);
@@ -254,6 +259,7 @@ int execlp(const char *file, const char *arg0, ...) {
     return execvpe(file, argv, environ);
 }
 
+__attribute__ ((visibility ("default"))) 
 int execle(const char *path, const char *arg0, ...) {
     va_list ap;
     va_start(ap, arg0);
@@ -264,10 +270,12 @@ int execle(const char *path, const char *arg0, ...) {
     return execve(path, argv, env);
 }
 
+__attribute__ ((visibility ("default"))) 
 int execv(const char *path, char *const *argv) {
     return execve(path, argv, environ);
 }
 
+__attribute__ ((visibility ("default"))) 
 int execvp(const char *file, char *const *argv) {
     return execvpe(file, argv, environ);
 }

@@ -1,0 +1,6 @@
+{
+global:
+    execve; execvpe; posix_spawn; execl; execlp; execle; execv; execvp;
+local:
+    *;
+};
