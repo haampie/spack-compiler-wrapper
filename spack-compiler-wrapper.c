@@ -153,18 +153,18 @@ void compiler_wrapper(char *const * argv, enum executable_t type) {
             // -rpath <path>, --rpath <path>, -rpath=<path>, --rpath=<path>.
             if (*arg == 'L') {
                 ++arg; if (*arg == '\0' && (arg = argv[++j]) == NULL) break;
-                printf("[ld] Path: %s (system path: %s)\n", arg, system_path(arg) ? "yes" : "no");
+                printf("[ld] Linker search path: %s (system path: %s)\n", arg, system_path(arg) ? "yes" : "no");
             } else if (*arg == 'l') {
                 ++arg; if (*arg == '\0' && (arg = argv[++j]) == NULL) break;
-                printf("[ld] Library -l flag: %s\n", arg);
+                printf("[ld] Library: %s\n", arg);
             } else if (strcmp(arg, "-enable-new-dtags") == 0) {
-                printf("[ld] Handle: --enable-new-dtags\n");
-            } else if (strcmp(arg, "--disable-new-dtags") == 0) {
-                printf("[ld] Handle: --disable-new-dtags\n");
+                printf("[ld] Using --enable-new-dtags\n");
+            } else if (strcmp(arg, "-disable-new-dtags") == 0) {
+                printf("[ld] Using --disable-new-dtags\n");
             } else {
-                if (strncmp(arg, "-rpath", 6) == 0) {
+                if (strncmp(arg, "rpath", 5) == 0) {
                    arg += 6;
-                } else if (strncmp(arg, "--rpath", 7) == 0) {
+                } else if (strncmp(arg, "-rpath", 6) == 0) {
                    arg += 7;
                 } else {
                     continue;
@@ -177,7 +177,7 @@ void compiler_wrapper(char *const * argv, enum executable_t type) {
                     if ((arg = argv[++j]) == NULL) break;
                 }
 
-                printf("[ld] rpath: %s\n", arg);
+                printf("[ld] Set rpath: %s\n", arg);
             }
         } else {
             // Compilation fix up: -I, -isystem, etc.
