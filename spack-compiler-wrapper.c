@@ -122,70 +122,148 @@ static const char * override_path(enum executable_t type) {
     exit(1);
 }
 
+// Compiler wrapper stuff
+
+int system_path(const char * p) {
+    char * sysdir = getenv("SPACK_SYSTEM_DIRS");
+    if (sysdir == NULL) return 0;
+    char * end;
+    while (1) {
+        end = strchr(sysdir, ':');
+        size_t len = end == NULL ? strlen(sysdir) : end - sysdir;
+        // Todo, remove trailing / from end?
+        if (strncmp(p, sysdir, len) == 0 && (p[len] == '\0' || p[len] == '/')) return 1;
+        if (end == NULL) break;
+        sysdir = end + 1;
+    }
+    return 0;
+}
+
+void compiler_wrapper(char *const * argv, enum executable_t type) {
+    printf("Calling %s\n", argv[0]);
+    for (size_t j = 0; argv[j] != NULL; ++j) {
+        char *arg = argv[j];
+
+        // Skip non-flags
+        if (*arg != '-' || arg[1] == '\0') continue;
+        ++arg;
+
+        if (type == SPACK_LD) {
+            // Linking fix up: --enable-new-dtags, --disable-new-dtags, -L,
+            // -rpath <path>, --rpath <path>, -rpath=<path>, --rpath=<path>.
+            if (*arg == 'L') {
+                ++arg; if (*arg == '\0' && (arg = argv[++j]) == NULL) break;
+                printf("[ld] Path: %s (system path: %s)\n", arg, system_path(arg) ? "yes" : "no");
+            } else if (*arg == 'l') {
+                ++arg; if (*arg == '\0' && (arg = argv[++j]) == NULL) break;
+                printf("[ld] Library -l flag: %s\n", arg);
+            } else if (strcmp(arg, "-enable-new-dtags") == 0) {
+                printf("[ld] Handle: --enable-new-dtags\n");
+            } else if (strcmp(arg, "--disable-new-dtags") == 0) {
+                printf("[ld] Handle: --disable-new-dtags\n");
+            } else {
+                if (strncmp(arg, "-rpath", 6) == 0) {
+                   arg += 6;
+                } else if (strncmp(arg, "--rpath", 7) == 0) {
+                   arg += 7;
+                } else {
+                    continue;
+                }
+
+                if (*arg == '=') {
+                    ++arg;
+                } else if (*arg == '\0') {
+                    // Ignore missing arguments
+                    if ((arg = argv[++j]) == NULL) break;
+                }
+
+                printf("[ld] rpath: %s\n", arg);
+            }
+        } else {
+            // Compilation fix up: -I, -isystem, etc.
+            if (*arg == 'I') {
+                ++arg; if (*arg == '\0' && (arg = argv[++j]) == NULL) break;
+                printf("[cc] Include path: %s (system path: %s)\n", arg, system_path(arg) ? "yes" : "no");
+            } else if (strcmp(arg, "system") == 0) {
+                ++arg; if (*arg == '\0' && (arg = argv[++j]) == NULL) break;
+                printf("[cc] System include path: %s (system path: %s)\n", arg, system_path(arg) ? "yes" : "no");
+            }
+        }
+    }
+}
+
+// The exec* + posix_spawn calls we wrap
+
 int execve(const char *path, char *const *argv, char *const *envp) {
-  enum executable_t type = compiler_type(get_filename(path));
-  if (type != SPACK_NONE) path = override_path(type);
-  typeof(execve) *real = dlsym(RTLD_NEXT, "execve");
-  return real(path, argv, envp);
+    enum executable_t type = compiler_type(get_filename(path));
+    if (type != SPACK_NONE) {
+        path = override_path(type);
+        compiler_wrapper(argv, type);
+    }
+    typeof(execve) *real = dlsym(RTLD_NEXT, "execve");
+    return real(path, argv, envp);
 }
 
 
 int execvpe(const char *file, char *const *argv, char *const *envp) {
-  enum executable_t type = compiler_type(get_filename(file));
-  if (type != SPACK_NONE) file = override_path(type);
-
-  for (int i = 0; envp[i]; i++)
-    putenv(envp[i]);
-
-  typeof(execvpe) *real = dlsym(RTLD_NEXT, "execvp");
-  return real(file, argv, environ);
+    enum executable_t type = compiler_type(get_filename(file));
+    if (type != SPACK_NONE) {
+        file = override_path(type);
+        compiler_wrapper(argv, type);
+    }
+    
+    for (int i = 0; envp[i]; i++)
+        putenv(envp[i]);
+    
+    typeof(execvpe) *real = dlsym(RTLD_NEXT, "execvp");
+    return real(file, argv, environ);
 }
 
 int posix_spawn(pid_t *pid, const char *path,
                 const posix_spawn_file_actions_t *file_actions,
                 const posix_spawnattr_t *attrp,
                 char *const *argv, char *const *envp) {
-  enum executable_t type = compiler_type(get_filename(path));
-  if (type != SPACK_NONE) path = override_path(type);
-  typeof(posix_spawn) *real = dlsym(RTLD_NEXT, "posix_spawn");
-  return real(pid, path, file_actions, attrp, argv, envp);
+    enum executable_t type = compiler_type(get_filename(path));
+    if (type != SPACK_NONE) path = override_path(type);
+    typeof(posix_spawn) *real = dlsym(RTLD_NEXT, "posix_spawn");
+    return real(pid, path, file_actions, attrp, argv, envp);
 }
 
-//
+// Fallback to execve / execvpe
 
 int execl(const char *path, const char *arg0, ...) {
-  va_list ap;
-  va_start(ap, arg0);
-  char **argv = alloca((count_args(&ap) + 2) * sizeof(char *));
-  copy_args(argv, arg0, &ap);
-  va_end(ap);
-  return execve(path, argv, environ);
+    va_list ap;
+    va_start(ap, arg0);
+    char **argv = alloca((count_args(&ap) + 2) * sizeof(char *));
+    copy_args(argv, arg0, &ap);
+    va_end(ap);
+    return execve(path, argv, environ);
 }
 
 int execlp(const char *file, const char *arg0, ...) {
-  va_list ap;
-  va_start(ap, arg0);
-  char **argv = alloca((count_args(&ap) + 2) * sizeof(char *));
-  copy_args(argv, arg0, &ap);
-  va_end(ap);
-  return execvpe(file, argv, environ);
+    va_list ap;
+    va_start(ap, arg0);
+    char **argv = alloca((count_args(&ap) + 2) * sizeof(char *));
+    copy_args(argv, arg0, &ap);
+    va_end(ap);
+    return execvpe(file, argv, environ);
 }
 
 int execle(const char *path, const char *arg0, ...) {
-  va_list ap;
-  va_start(ap, arg0);
-  char **argv = alloca((count_args(&ap) + 2) * sizeof(char *));
-  copy_args(argv, arg0, &ap);
-  char **env = va_arg(ap, char **);
-  va_end(ap);
-  return execve(path, argv, env);
+    va_list ap;
+    va_start(ap, arg0);
+    char **argv = alloca((count_args(&ap) + 2) * sizeof(char *));
+    copy_args(argv, arg0, &ap);
+    char **env = va_arg(ap, char **);
+    va_end(ap);
+    return execve(path, argv, env);
 }
 
 int execv(const char *path, char *const *argv) {
-  return execve(path, argv, environ);
+    return execve(path, argv, environ);
 }
 
 int execvp(const char *file, char *const *argv) {
-  return execvpe(file, argv, environ);
+    return execvpe(file, argv, environ);
 }
 
