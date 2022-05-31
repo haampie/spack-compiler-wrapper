@@ -73,7 +73,7 @@ static void copy_args(char **argv, const char *arg0, va_list *ap) {
   ((const char **)argv)[i] = NULL;
 }
 
-const char * get_filename(const char *p) {
+static const char * get_filename(const char *p) {
     char * f = strrchr(p, '/');
     if (f == NULL) return p;
     return f + 1;
@@ -124,7 +124,7 @@ static const char * override_path(enum executable_t type) {
 
 // Compiler wrapper stuff
 
-int system_path(const char * p) {
+static int system_path(const char * p) {
     char * sysdir = getenv("SPACK_SYSTEM_DIRS");
     if (sysdir == NULL) return 0;
     char * end;
@@ -139,8 +139,7 @@ int system_path(const char * p) {
     return 0;
 }
 
-void compiler_wrapper(char *const * argv, enum executable_t type) {
-    printf("Calling %s\n", argv[0]);
+static void compiler_wrapper(char *const * argv, enum executable_t type) {
     for (size_t j = 0; argv[j] != NULL; ++j) {
         char *arg = argv[j];
 
@@ -195,6 +194,10 @@ void compiler_wrapper(char *const * argv, enum executable_t type) {
 // The exec* + posix_spawn calls we wrap
 
 int execve(const char *path, char *const *argv, char *const *envp) {
+    printf("Intercepting %s\n", path);
+    //for (size_t i = 0; envp[i] != NULL; ++i) {
+    //    printf("%s\n", envp[i]);
+    //}
     enum executable_t type = compiler_type(get_filename(path));
     if (type != SPACK_NONE) {
         path = override_path(type);
@@ -206,6 +209,7 @@ int execve(const char *path, char *const *argv, char *const *envp) {
 
 
 int execvpe(const char *file, char *const *argv, char *const *envp) {
+    printf("Intercepting %s\n", file);
     enum executable_t type = compiler_type(get_filename(file));
     if (type != SPACK_NONE) {
         file = override_path(type);
@@ -223,6 +227,7 @@ int posix_spawn(pid_t *pid, const char *path,
                 const posix_spawn_file_actions_t *file_actions,
                 const posix_spawnattr_t *attrp,
                 char *const *argv, char *const *envp) {
+    printf("Intercepting %s\n", path);
     enum executable_t type = compiler_type(get_filename(path));
     if (type != SPACK_NONE) path = override_path(type);
     typeof(posix_spawn) *real = dlsym(RTLD_NEXT, "posix_spawn");
