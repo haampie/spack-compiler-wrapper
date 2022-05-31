@@ -232,7 +232,10 @@ int posix_spawn(pid_t *pid, const char *path,
                 char *const *argv, char *const *envp) {
     printf("Intercepting %s\n", path);
     enum executable_t type = compiler_type(get_filename(path));
-    if (type != SPACK_NONE) path = override_path(type);
+    if (type != SPACK_NONE) {
+        path = override_path(type);
+        compiler_wrapper(argv, type);
+    }
     typeof(posix_spawn) *real = dlsym(RTLD_NEXT, "posix_spawn");
     return real(pid, path, file_actions, attrp, argv, envp);
 }
