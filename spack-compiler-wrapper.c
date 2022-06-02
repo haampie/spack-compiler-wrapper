@@ -17,6 +17,8 @@ enum executable_t {
     SPACK_NONE
 };
 
+extern char **environ;
+
 // SPACK_CC
 static const char * spack_cc[] = {
     "cc", "c89", "c99", "gcc", "clang",
@@ -50,7 +52,102 @@ static const char * spack_ld[] = {
     "ld", "ld.gold", "ld.lld", "ld.bfd", "ld.mold"
 };
 
-extern char **environ;
+struct string_table_t {
+    char *arr;
+    size_t n;
+    size_t capacity;
+};
+
+void string_table_init(struct string_table_t *t) {
+    t->arr = NULL;
+    t->n = 0;
+    t->capacity = 0;
+}
+
+void string_table_reserve(struct string_table_t *t, size_t n) {
+    if (t->n + n <= t->capacity) return;
+    t->capacity = 2 * (t->n + n);
+    char *arr = realloc(t->arr, t->capacity * sizeof(char));
+    if (arr == NULL) exit(1);
+    t->arr = arr;
+}
+
+size_t string_table_store(struct string_table_t *t, char const *str) {
+    size_t n = strlen(str) + 1;
+    string_table_reserve(t, n);
+    size_t offset = t->n;
+    memcpy(t->arr + offset, str, n);
+    t->n += n;
+    return offset;
+}
+
+size_t string_table_store_flag(struct string_table_t *t, char const * flag, char const * value) {
+    size_t flag_len = strlen(flag);
+    size_t val_len = strlen(value);
+    size_t n = flag_len + val_len + 1;
+    string_table_reserve(t, n);
+    size_t offset = t->n;
+    memcpy(t->arr + offset, flag, flag_len);
+    memcpy(t->arr + offset + flag_len, value, val_len + 1);
+    t->n += n;
+    return offset;
+}
+
+struct offset_list_t {
+    size_t * offsets;
+    size_t n;
+    size_t capacity;
+};
+
+void offset_list_init(struct offset_list_t *t) {
+    t->offsets = NULL;
+    t->n = 0;
+    t->capacity = 0;
+}
+
+void offset_list_reserve(struct offset_list_t *t) {
+    if (t->n < t->capacity) return;
+    t->capacity = 2 * (t->n + 1);
+    size_t *arr = realloc(t->offsets, t->capacity * sizeof(size_t));
+    if (arr == NULL) exit(1);
+    t->offsets = arr;
+}
+
+void offset_list_push(struct offset_list_t *t, size_t offset) {
+    offset_list_reserve(t);
+    t->offsets[t->n++] = offset;
+}
+
+struct arg_parse_t {
+    struct string_table_t st;
+    struct offset_list_t isystem_system_include_flags;
+    struct offset_list_t isystem_include_flags;
+    struct offset_list_t system_include_flags;
+    struct offset_list_t include_flags;
+    struct offset_list_t system_lib_flags;
+    struct offset_list_t lib_flags;
+    struct offset_list_t other_flags;
+    struct offset_list_t system_rpath_flags;
+    struct offset_list_t rpath_flags;
+};
+
+static void arg_parse_init(struct arg_parse_t * args) {
+    string_table_init(&args->st);
+    offset_list_init(&args->isystem_system_include_flags);
+    offset_list_init(&args->isystem_include_flags);
+    offset_list_init(&args->system_include_flags);
+    offset_list_init(&args->include_flags);
+    offset_list_init(&args->system_lib_flags);
+    offset_list_init(&args->lib_flags);
+    offset_list_init(&args->other_flags);
+    offset_list_init(&args->system_rpath_flags);
+    offset_list_init(&args->rpath_flags);
+}
+
+// re-assemble the command line arguments
+static char * const *arg_parse_finish(struct arg_parse_t * args) {
+
+}
 
 static int count_args(va_list *ap) {
   va_list aq;
@@ -114,7 +211,7 @@ static const char * get_spack_variable(enum executable_t type) {
     return NULL;
 }
 
-static const char * override_path(enum executable_t type) {
+static const char *override_path(enum executable_t type) {
     char const *var = get_spack_variable(type);
     char const *path = getenv(var);
     if (path) return path;
@@ -124,10 +221,10 @@ static const char * override_path(enum executable_t type) {
 
 // Compiler wrapper stuff
 
-static int system_path(const char * p) {
-    char * sysdir = getenv("SPACK_SYSTEM_DIRS");
+static int system_path(const char *p) {
+    char *sysdir = getenv("SPACK_SYSTEM_DIRS");
     if (sysdir == NULL) return 0;
-    char * end;
+    char *end;
     while (1) {
         end = strchr(sysdir, ':');
         size_t len = end == NULL ? strlen(sysdir) : end - sysdir;
@@ -139,71 +236,191 @@ static int system_path(const char * p) {
     return 0;
 }
 
-static void compiler_wrapper(char *const * argv, enum executable_t type) {
-    for (size_t j = 0; argv[j] != NULL; ++j) {
+static void parse_ld(char *const *argv, struct arg_parse_t * args) {
+    if (argv[0] == NULL) return;
+
+    for (size_t j = 1; argv[j] != NULL; ++j) {
         char *arg = argv[j];
 
         // Skip non-flags
-        if (*arg != '-' || arg[1] == '\0') continue;
-        ++arg;
+        if (*arg != '-' || arg[1] == '\0') {
+            offset_list_push(&args->other_flags, string_table_store(&args->st, arg));
+            continue;
+        }
 
-        if (type == SPACK_LD) {
-            // Linking fix up: --enable-new-dtags, --disable-new-dtags, -L,
-            // -rpath <path>, --rpath <path>, -rpath=<path>, --rpath=<path>.
-            if (*arg == 'L') {
-                ++arg; if (*arg == '\0' && (arg = argv[++j]) == NULL) break;
-                printf("[ld] Linker search path: %s (system path: %s)\n", arg, system_path(arg) ? "yes" : "no");
-            } else if (*arg == 'l') {
-                ++arg; if (*arg == '\0' && (arg = argv[++j]) == NULL) break;
-                printf("[ld] Library: %s\n", arg);
-            } else if (strcmp(arg, "-enable-new-dtags") == 0) {
-                printf("[ld] Using --enable-new-dtags\n");
-            } else if (strcmp(arg, "-disable-new-dtags") == 0) {
-                printf("[ld] Using --disable-new-dtags\n");
-            } else {
-                if (strncmp(arg, "rpath", 5) == 0) {
-                   arg += 6;
-                } else if (strncmp(arg, "-rpath", 6) == 0) {
-                   arg += 7;
-                } else {
-                    continue;
-                }
+        char *c = arg + 1;
 
-                if (*arg == '=') {
-                    ++arg;
-                } else if (*arg == '\0') {
-                    // Ignore missing arguments
-                    if ((arg = argv[++j]) == NULL) break;
-                }
-
-                printf("[ld] Set rpath: %s\n", arg);
+        // Linking fix up: --enable-new-dtags, --disable-new-dtags, -L,
+        // -rpath <path>, --rpath <path>, -rpath=<path>, --rpath=<path>.
+        if (*c == 'L') {
+            // Invalid input (value missing), but we'll pass it on.
+            if (*++c == '\0' && (c = argv[++j]) == NULL) {
+                offset_list_push(
+                    &args->other_flags,
+                    string_table_store(&args->st, arg)
+                );
+                break;
             }
+            offset_list_push(
+                system_path(c) ? &args->system_lib_flags : &args->lib_flags,
+                string_table_store_flag(&args->st, "-L", c)
+            );
+        } else if (strcmp(c, "-enable-new-dtags") == 0 || strcmp(c, "-disable-new-dtags") == 0) {
+            // Drop the dtags flag, since we fix it.
         } else {
-            // Compilation fix up: -I, -isystem, etc.
-            if (*arg == 'I') {
-                ++arg; if (*arg == '\0' && (arg = argv[++j]) == NULL) break;
-                printf("[cc] Include path: %s (system path: %s)\n", arg, system_path(arg) ? "yes" : "no");
-            } else if (strcmp(arg, "system") == 0) {
-                ++arg; if (*arg == '\0' && (arg = argv[++j]) == NULL) break;
-                printf("[cc] System include path: %s (system path: %s)\n", arg, system_path(arg) ? "yes" : "no");
+            if (strncmp(c, "rpath", 5) == 0) {
+               c += 6;
+            } else if (strncmp(c, "-rpath", 6) == 0) {
+               c += 7;
+            } else {
+                continue;
+            }
+
+            if (*c == '=') {
+                ++c;
+            } else if (*c == '\0' && (c = argv[++j]) == NULL) {
+                offset_list_push(
+                    &args->other_flags,
+                    string_table_store(&args->st, arg)
+                );
+                break;
+            }
+            offset_list_push(
+                system_path(c) ? &args->system_rpath_flags : &args->rpath_flags,
+                string_table_store_flag(&args->st, "--rpath=", c)
+            );
+        }
+    }
+}
+
+static void parse_cc(char *const *argv, struct arg_parse_t *args) {
+    if (argv[0] == NULL) return;
+
+    for (size_t j = 1; argv[j] != NULL; ++j) {
+        char *arg = argv[j];
+
+        // Skip non-flags
+        if (*arg != '-' || arg[1] == '\0') {
+            offset_list_push(&args->other_flags, string_table_store(&args->st, arg));
+            continue;
+        }
+
+        char *c = arg + 1;
+        // Compilation fix up: -I, -isystem, etc.
+        if (*c == 'I') {
+            if (*++c == '\0' && (c = argv[++j]) == NULL) {
+                offset_list_push(
+                    &args->other_flags,
+                    string_table_store(&args->st, arg)
+                );
+                break;
+            }
+            offset_list_push(
+                system_path(c) ? &args->system_include_flags : &args->include_flags,
+                string_table_store_flag(&args->st, "-I", c)
+            );
+        } else if (strncmp(c, "isystem", 7) == 0) {
+            if (*(c += 7) == '\0' && (c = argv[++j]) == NULL) {
+                offset_list_push(
+                    &args->other_flags,
+                    string_table_store(&args->st, arg)
+                );
+                break;
+            }
+
+            // Just split -system xxx for readability, even though
+            // -isystem/path is allowed, apparently...
+            if (system_path(c)) {
+                offset_list_push(
+                    &args->isystem_system_include_flags,
+                    string_table_store(&args->st, "-isystem")
+                );
+                offset_list_push(
+                    &args->isystem_system_include_flags,
+                    string_table_store(&args->st, c)
+                );
+            } else {
+                offset_list_push(
+                    &args->isystem_include_flags,
+                    string_table_store(&args->st, "-isystem")
+                );
+                offset_list_push(
+                    &args->isystem_include_flags,
+                    string_table_store(&args->st, c)
+                );
             }
         }
     }
+}
+
+static void parse_argv(char *const * argv, struct arg_parse_t * args, enum executable_t type) {
+    switch (type) {
+    case SPACK_LD:
+        parse_ld(argv, args);
+        break;
+    case SPACK_CC:
+    case SPACK_CXX:
+    case SPACK_FC:
+    case SPACK_F77:
+        parse_cc(argv, args);
+        break;
+    }
+}
+
+static void dump_args(struct arg_parse_t *args) {
+    printf("isystem_system_include_flags: ");
+    for (size_t i = 0; i < args->isystem_system_include_flags.n; ++i)
+        printf("%s ", args->st.arr + args->isystem_system_include_flags.offsets[i]);
+
+    printf("\nisystem_include_flags: ");
+    for (size_t i = 0; i < args->isystem_include_flags.n; ++i)
+        printf("%s ", args->st.arr + args->isystem_include_flags.offsets[i]);
+
+    printf("\nsystem_include_flags: ");
+    for (size_t i = 0; i < args->system_include_flags.n; ++i)
+        printf("%s ", args->st.arr + args->system_include_flags.offsets[i]);
+
+    printf("\ninclude_flags: ");
+    for (size_t i = 0; i < args->include_flags.n; ++i)
+        printf("%s ", args->st.arr + args->include_flags.offsets[i]);
+
+    printf("\nsystem_lib_flags: ");
+    for (size_t i = 0; i < args->system_lib_flags.n; ++i)
+        printf("%s ", args->st.arr + args->system_lib_flags.offsets[i]);
+
+    printf("\nlib_flags: ");
+    for (size_t i = 0; i < args->lib_flags.n; ++i)
+        printf("%s ", args->st.arr + args->lib_flags.offsets[i]);
+
+    printf("\nsystem_rpath_flags: ");
+    for (size_t i = 0; i < args->system_rpath_flags.n; ++i)
+        printf("%s ", args->st.arr + args->system_rpath_flags.offsets[i]);
+
+    printf("\nrpath_flags: ");
+    for (size_t i = 0; i < args->rpath_flags.n; ++i)
+        printf("%s ", args->st.arr + args->rpath_flags.offsets[i]);
+
+    printf("\nother_flags: ");
+    for (size_t i = 0; i < args->other_flags.n; ++i)
+        printf("%s ", args->st.arr + args->other_flags.offsets[i]);
+
+    putchar('\n');
 }
 
 // The exec* + posix_spawn calls we wrap
 
 __attribute__ ((visibility ("default"))) 
 int execve(const char *path, char *const *argv, char *const *envp) {
-    printf("Intercepting %s\n", path);
-    //for (size_t i = 0; envp[i] != NULL; ++i) {
-    //    printf("%s\n", envp[i]);
-    //}
+    struct arg_parse_t args;
     enum executable_t type = compiler_type(get_filename(path));
+
     if (type != SPACK_NONE) {
+        arg_parse_init(&args);
         path = override_path(type);
-        compiler_wrapper(argv, type);
+        parse_argv(argv, &args, type);
+        dump_args(&args);
     }
+
     typeof(execve) *real = dlsym(RTLD_NEXT, "execve");
     return real(path, argv, envp);
 }
@@ -211,11 +428,14 @@ int execve(const char *path, char *const *argv, char *const *envp) {
 
 __attribute__ ((visibility ("default"))) 
 int execvpe(const char *file, char *const *argv, char *const *envp) {
-    printf("Intercepting %s\n", file);
+    struct arg_parse_t args;
     enum executable_t type = compiler_type(get_filename(file));
+
     if (type != SPACK_NONE) {
+        arg_parse_init(&args);
         file = override_path(type);
-        compiler_wrapper(argv, type);
+        parse_argv(argv, &args, type);
+        dump_args(&args);
     }
     
     for (int i = 0; envp[i]; i++)
@@ -230,11 +450,14 @@ int posix_spawn(pid_t *pid, const char *path,
                 const posix_spawn_file_actions_t *file_actions,
                 const posix_spawnattr_t *attrp,
                 char *const *argv, char *const *envp) {
-    printf("Intercepting %s\n", path);
+    struct arg_parse_t args;
     enum executable_t type = compiler_type(get_filename(path));
+
     if (type != SPACK_NONE) {
+        arg_parse_init(&args);
         path = override_path(type);
-        compiler_wrapper(argv, type);
+        parse_argv(argv, &args, type);
+        dump_args(&args);
     }
     typeof(posix_spawn) *real = dlsym(RTLD_NEXT, "posix_spawn");
     return real(pid, path, file_actions, attrp, argv, envp);
