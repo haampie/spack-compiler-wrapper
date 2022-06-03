@@ -608,23 +608,35 @@ static void parse_spack_env(struct state_t *s, enum executable_t type) {
   }
 }
 
+char *const *rewrite_args(char const *path, char *const *argv,
+                          enum executable_t type, struct state_t *s) {
+  arg_parse_init(s);
+  if (type != SPACK_LD)
+    parse_compile_mode(argv, s);
+  parse_spack_env(s, type);
+  parse_argv(argv, s, type);
+  char *const *new_argv = arg_parse_finish(path, s);
+  char const *test_command = getenv("SPACK_TEST_COMMAND");
+  if (test_command == NULL)
+    return new_argv;
+  if (strcmp(test_command, "dump-args") == 0) {
+    for (size_t j = 0; new_argv[j] != NULL; ++j)
+      puts(new_argv[j]);
+    exit(0);
+  }
+  return new_argv;
+}
+
 // The exec* + posix_spawn calls we wrap
 
 __attribute__((visibility("default"))) int
 execve(const char *path, char *const *argv, char *const *envp) {
   struct state_t s;
   enum executable_t type = compiler_type(get_filename(path));
-
   if (type != SPACK_NONE) {
     path = override_path(type);
-    arg_parse_init(&s);
-    if (type != SPACK_LD)
-      parse_compile_mode(argv, &s);
-    parse_spack_env(&s, type);
-    parse_argv(argv, &s, type);
-    argv = arg_parse_finish(path, &s);
+    argv = rewrite_args(path, argv, type, &s);
   }
-
   typeof(execve) *real = dlsym(RTLD_NEXT, "execve");
   return real(path, argv, envp);
 }
@@ -633,15 +645,9 @@ __attribute__((visibility("default"))) int
 execvpe(const char *file, char *const *argv, char *const *envp) {
   struct state_t s;
   enum executable_t type = compiler_type(get_filename(file));
-
   if (type != SPACK_NONE) {
     file = override_path(type);
-    arg_parse_init(&s);
-    if (type != SPACK_LD)
-      parse_compile_mode(argv, &s);
-    parse_spack_env(&s, type);
-    parse_argv(argv, &s, type);
-    argv = arg_parse_finish(file, &s);
+    argv = rewrite_args(file, argv, type, &s);
   }
 
   for (int i = 0; envp[i]; i++)
@@ -658,15 +664,9 @@ posix_spawn(pid_t *pid, const char *path,
             char *const *envp) {
   struct state_t s;
   enum executable_t type = compiler_type(get_filename(path));
-
   if (type != SPACK_NONE) {
     path = override_path(type);
-    arg_parse_init(&s);
-    if (type != SPACK_LD)
-      parse_compile_mode(argv, &s);
-    parse_spack_env(&s, type);
-    parse_argv(argv, &s, type);
-    argv = arg_parse_finish(path, &s);
+    argv = rewrite_args(path, argv, type, &s);
   }
   typeof(posix_spawn) *real = dlsym(RTLD_NEXT, "posix_spawn");
   return real(pid, path, file_actions, attrp, argv, envp);
