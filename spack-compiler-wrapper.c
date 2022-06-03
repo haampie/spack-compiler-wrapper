@@ -480,46 +480,6 @@ static void parse_argv(char *const *argv, struct state_t *s,
   }
 }
 
-static void dump_args(struct state_t *s) {
-  printf("isystem_system_include_flags: ");
-  for (size_t i = 0; i < s->isystem_system_include_flags.n; ++i)
-    printf("%s ", s->strings.arr + s->isystem_system_include_flags.offsets[i]);
-
-  printf("\nisystem_include_flags: ");
-  for (size_t i = 0; i < s->isystem_include_flags.n; ++i)
-    printf("%s ", s->strings.arr + s->isystem_include_flags.offsets[i]);
-
-  printf("\nsystem_include_flags: ");
-  for (size_t i = 0; i < s->system_include_flags.n; ++i)
-    printf("%s ", s->strings.arr + s->system_include_flags.offsets[i]);
-
-  printf("\ninclude_flags: ");
-  for (size_t i = 0; i < s->include_flags.n; ++i)
-    printf("%s ", s->strings.arr + s->include_flags.offsets[i]);
-
-  printf("\nsystem_lib_flags: ");
-  for (size_t i = 0; i < s->system_lib_flags.n; ++i)
-    printf("%s ", s->strings.arr + s->system_lib_flags.offsets[i]);
-
-  printf("\nlib_flags: ");
-  for (size_t i = 0; i < s->lib_flags.n; ++i)
-    printf("%s ", s->strings.arr + s->lib_flags.offsets[i]);
-
-  printf("\nsystem_rpath_flags: ");
-  for (size_t i = 0; i < s->system_rpath_flags.n; ++i)
-    printf("%s ", s->strings.arr + s->system_rpath_flags.offsets[i]);
-
-  printf("\nrpath_flags: ");
-  for (size_t i = 0; i < s->rpath_flags.n; ++i)
-    printf("%s ", s->strings.arr + s->rpath_flags.offsets[i]);
-
-  printf("\nother_flags: ");
-  for (size_t i = 0; i < s->other_flags.n; ++i)
-    printf("%s ", s->strings.arr + s->other_flags.offsets[i]);
-
-  putchar('\n');
-}
-
 static void store_delimited_flags(char const *str, char delim, char const *flag,
                                   struct string_table_t *strings,
                                   struct offset_list_t *list) {
