@@ -38,3 +38,4 @@ $ ./build.sh
 - [ ] `SPACK_CCACHE_BINARY`
 - [ ] `SPACK_TEST_COMMAND=dump-env`
 - [ ] `SPACK_DEBUG=TRUE`
+- [ ] `SPACK_LDLIBS`
