@@ -22,6 +22,7 @@ enum mode_t {
   SPACK_MODE_CC,       // preprocess, compile, assemble (-c)
   SPACK_MODE_AS,       // preprocess, compile (-S)
   SPACK_MODE_CPP,      // preprocess (-E)
+  SPACK_MODE_VERSION,  // -v, -V, --version, -dumpversion, -dumpmachine
   SPACK_MODE_INTERNAL, // e.g. clang -cc1
 };
 
@@ -204,7 +205,6 @@ static const char *override_path(enum executable_t type) {
 }
 
 static void arg_parse_init(struct state_t *s) {
-  s->mode = SPACK_MODE_CCLD;
   string_table_init(&s->strings);
 
   offset_list_init(&s->spack_compiler_flags);
@@ -373,9 +373,11 @@ static void parse_compile_mode(char *const *argv, struct state_t *s) {
     if (arg[0] != '-' || arg[1] == '\0')
       continue;
 
+    ++arg;
+
     // Single character flags
-    if (arg[2] == '\0') {
-      switch (arg[1]) {
+    if (arg[1] == '\0') {
+      switch (*arg) {
       case 'c':
         s->mode = s->mode > SPACK_MODE_CC ? s->mode : SPACK_MODE_CC;
         break;
@@ -385,11 +387,19 @@ static void parse_compile_mode(char *const *argv, struct state_t *s) {
       case 'E':
         s->mode = s->mode > SPACK_MODE_CPP ? s->mode : SPACK_MODE_CPP;
         break;
+      case 'v':
+      case 'V':
+        s->mode = s->mode > SPACK_MODE_VERSION ? s->mode : SPACK_MODE_VERSION;
+        return;
       }
-    } else {
-      // we don't mess with clang -cc1 "internal" calls.
-      if (arg[1] == 'c' && arg[2] == 'c' && arg[3] == '1' && arg[4] == '\0')
-        s->mode = SPACK_MODE_INTERNAL;
+    } else if (strcmp(arg, "cc1") == 0) {
+      // We don't wanna intercept Clang's -cc1 "internal" calls.
+      s->mode = SPACK_MODE_INTERNAL;
+      return;
+    } else if (strcmp(arg, "-version") == 0 ||
+               strcmp(arg, "dumpversion") == 0) {
+      // --version and -dumpversion; we don't intercept them.
+      s->mode = SPACK_MODE_VERSION;
       return;
     }
   }
@@ -698,10 +708,7 @@ static int should_intercept(const char *path, char *const *argv,
   // Quickly scan for clang -cc1 type of args; we shouldn't wrap those.
   parse_compile_mode(argv, s);
 
-  if (s->mode == SPACK_MODE_INTERNAL)
-    return 0;
-
-  return 1;
+  return s->mode != SPACK_MODE_INTERNAL && s->mode != SPACK_MODE_VERSION;
 }
 
 #define SPACK_PATH_MAX 1024
