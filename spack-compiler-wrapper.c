@@ -166,7 +166,38 @@ struct state_t {
   struct offset_list_t system_rpath_flags;
 
   struct offset_list_t other_flags;
+
+  struct offset_list_t env;
+
+  int has_ccache;
+  size_t offset_ccache;
+  size_t offset_compiler_or_linker;
 };
+
+static const char *get_spack_variable(enum executable_t type) {
+  switch (type) {
+  case SPACK_CC:
+    return "SPACK_CC";
+  case SPACK_CXX:
+    return "SPACK_CXX";
+  case SPACK_FC:
+    return "SPACK_FC";
+  case SPACK_F77:
+    return "SPACK_F77";
+  case SPACK_LD:
+    return "SPACK_LD";
+  }
+  return NULL;
+}
+
+static const char *override_path(enum executable_t type) {
+  char const *var = get_spack_variable(type);
+  char const *path = getenv(var);
+  if (path)
+    return path;
+  fprintf(stderr, "%s not set\n", var);
+  exit(1);
+}
 
 static void arg_parse_init(struct state_t *s) {
   s->mode = SPACK_MODE_CCLD;
@@ -189,24 +220,33 @@ static void arg_parse_init(struct state_t *s) {
   offset_list_init(&s->system_rpath_flags);
 
   offset_list_init(&s->other_flags);
+
+  offset_list_init(&s->env);
+  s->has_ccache = 0;
 }
 
 // re-assemble the command line arguments
-static char *const *arg_parse_finish(const char *argv0, struct state_t *s) {
+static char *const *arg_parse_finish(struct state_t const *s,
+                                     enum executable_t type) {
   size_t n = s->spack_compiler_flags.n + s->isystem_include_flags.n +
              s->include_flags.n + s->spack_include_flags.n +
              s->isystem_system_include_flags.n + s->system_include_flags.n +
              s->lib_flags.n + s->spack_lib_flags.n + s->system_lib_flags.n +
              s->rpath_flags.n + s->spack_rpath_flags.n +
              s->system_rpath_flags.n + s->other_flags.n;
-  // todo, use alloca
+  if (s->has_ccache)
+    ++n;
   char **argv = malloc((n + 2) * sizeof(char *));
 
-  size_t exe_offset = string_table_store(&s->strings, argv0);
+  size_t i = 0;
 
-  argv[0] = s->strings.arr + exe_offset;
+  // Store ccache and compiler path.
+  size_t offset_ccache = 0;
 
-  size_t i = 1;
+  if (s->has_ccache)
+    argv[i++] = s->strings.arr + s->offset_ccache;
+
+  argv[i++] = s->strings.arr + s->offset_compiler_or_linker;
 
   // -march, cflags, etc
   for (size_t j = 0; j < s->spack_compiler_flags.n; ++j)
@@ -244,6 +284,15 @@ static char *const *arg_parse_finish(const char *argv0, struct state_t *s) {
   for (size_t j = 0; j < s->other_flags.n; ++j)
     argv[i++] = s->strings.arr + s->other_flags.offsets[j];
   return argv;
+}
+
+// create env
+static char *const *env_finish(struct state_t const *s) {
+  char **env = malloc((s->env.n + 1) * sizeof(char *));
+  for (size_t j = 0; j < s->env.n; ++j)
+    env[j] = s->strings.arr + s->env.offsets[j];
+  env[s->env.n] = NULL;
+  return env;
 }
 
 static int count_args(va_list *ap) {
@@ -291,31 +340,6 @@ static enum executable_t compiler_type(const char *filename) {
     if (strcmp(filename, spack_ld[j]) == 0)
       return SPACK_LD;
   return SPACK_NONE;
-}
-
-static const char *get_spack_variable(enum executable_t type) {
-  switch (type) {
-  case SPACK_CC:
-    return "SPACK_CC";
-  case SPACK_CXX:
-    return "SPACK_CXX";
-  case SPACK_FC:
-    return "SPACK_FC";
-  case SPACK_F77:
-    return "SPACK_F77";
-  case SPACK_LD:
-    return "SPACK_LD";
-  }
-  return NULL;
-}
-
-static const char *override_path(enum executable_t type) {
-  char const *var = get_spack_variable(type);
-  char const *path = getenv(var);
-  if (path)
-    return path;
-  fprintf(stderr, "%s not set\n", var);
-  exit(1);
 }
 
 // Compiler wrapper stuff
@@ -568,53 +592,100 @@ static void parse_spack_env(struct state_t *s, enum executable_t type) {
   }
 }
 
-char *const *rewrite_args(char const *path, char *const *argv,
-                          enum executable_t type, struct state_t *s) {
+static void copy_env(struct string_table_t *strings,
+                     struct offset_list_t *env_offsets, char *const *envp) {
+  for (char *const *env = envp; *env != NULL; ++env)
+    offset_list_push(env_offsets, string_table_store(strings, *env));
+}
+
+struct new_args {
+  char *const *argv;
+  char *const *env;
+};
+
+struct new_args rewrite_args_and_env(char *const *argv, char *const *envp,
+                                     enum executable_t type,
+                                     struct state_t *s) {
+  struct new_args args;
   arg_parse_init(s);
   if (type != SPACK_LD)
     parse_compile_mode(argv, s);
+
+  // Store the actual compiler
+  s->offset_compiler_or_linker =
+      string_table_store(&s->strings, override_path(type));
+
+  // Maybe store ccache path.
+  if (type == SPACK_CC || type == SPACK_CXX) {
+    char const *ccache = getenv("SPACK_CCACHE_BINARY");
+    if (ccache) {
+      s->has_ccache = 1;
+      s->offset_ccache = string_table_store(&s->strings, ccache);
+    }
+  }
+
+  // Copy the environment variables
+  copy_env(&s->strings, &s->env, envp);
+
+  // Store SPACK_CC/LD_DONE to avoid recursive wrapping.
+  if (type == SPACK_CC || type == SPACK_CXX || type == SPACK_F77 ||
+      type == SPACK_FC)
+    offset_list_push(&s->env,
+                     string_table_store(&s->strings, "SPACK_CC_DONE=1"));
+
+  if (type == SPACK_LD)
+    offset_list_push(&s->env,
+                     string_table_store(&s->strings, "SPACK_LD_DONE=1"));
+
   parse_spack_env(s, type);
   parse_argv(argv, s, type);
-  char *const *new_argv = arg_parse_finish(path, s);
-  char const *test_command = getenv("SPACK_TEST_COMMAND");
-  if (test_command == NULL)
-    return new_argv;
-  if (strcmp(test_command, "dump-args") == 0) {
-    for (size_t j = 0; new_argv[j] != NULL; ++j)
-      puts(new_argv[j]);
-    exit(0);
-  }
-  return new_argv;
+
+  args.argv = arg_parse_finish(s, type);
+  args.env = env_finish(s);
+  return args;
+
+  // char const *test_command = getenv("SPACK_TEST_COMMAND");
+  // if (test_command == NULL)
+  //   return new_argv;
+  // if (strcmp(test_command, "dump-args") == 0) {
+  //   for (char *const *arg = new_argv; *arg != NULL; ++arg)
+  //     puts(*arg);
+  //   exit(0);
+  // }
+  // return new_argv;
+}
+
+static int is_wrapper_enabled(enum executable_t type) {
+  // avoid double wrapping when injecting `ccache cc [args]...`
+  if (type == SPACK_NONE)
+    return 0;
+  if (type == SPACK_LD)
+    return getenv("SPACK_LD_DONE") == NULL;
+  return getenv("SPACK_CC_DONE") == NULL;
 }
 
 // The exec* + posix_spawn calls we wrap
 
 __attribute__((visibility("default"))) int
 execve(const char *path, char *const *argv, char *const *envp) {
-  struct state_t s;
+  typeof(execve) *next = dlsym(RTLD_NEXT, "execve");
   enum executable_t type = compiler_type(get_filename(path));
-  if (type != SPACK_NONE) {
-    path = override_path(type);
-    argv = rewrite_args(path, argv, type, &s);
-  }
-  typeof(execve) *real = dlsym(RTLD_NEXT, "execve");
-  return real(path, argv, envp);
+  if (!is_wrapper_enabled(type))
+    return next(path, argv, envp);
+  struct state_t s;
+  struct new_args args = rewrite_args_and_env(argv, envp, type, &s);
+  return next(args.argv[0], args.argv, args.env);
 }
 
 __attribute__((visibility("default"))) int
 execvpe(const char *file, char *const *argv, char *const *envp) {
-  struct state_t s;
+  typeof(execvpe) *next = dlsym(RTLD_NEXT, "execvp");
   enum executable_t type = compiler_type(get_filename(file));
-  if (type != SPACK_NONE) {
-    file = override_path(type);
-    argv = rewrite_args(file, argv, type, &s);
-  }
-
-  for (int i = 0; envp[i]; i++)
-    putenv(envp[i]);
-
-  typeof(execvpe) *real = dlsym(RTLD_NEXT, "execvp");
-  return real(file, argv, environ);
+  if (!is_wrapper_enabled(type))
+    return next(file, argv, envp);
+  struct state_t s;
+  struct new_args args = rewrite_args_and_env(argv, envp, type, &s);
+  return next(args.argv[0], args.argv, args.env);
 }
 
 __attribute__((visibility("default"))) int
@@ -622,14 +693,13 @@ posix_spawn(pid_t *pid, const char *path,
             const posix_spawn_file_actions_t *file_actions,
             const posix_spawnattr_t *attrp, char *const *argv,
             char *const *envp) {
-  struct state_t s;
+  typeof(posix_spawn) *next = dlsym(RTLD_NEXT, "posix_spawn");
   enum executable_t type = compiler_type(get_filename(path));
-  if (type != SPACK_NONE) {
-    path = override_path(type);
-    argv = rewrite_args(path, argv, type, &s);
-  }
-  typeof(posix_spawn) *real = dlsym(RTLD_NEXT, "posix_spawn");
-  return real(pid, path, file_actions, attrp, argv, envp);
+  if (!is_wrapper_enabled(type))
+    return next(pid, path, file_actions, attrp, argv, envp);
+  struct state_t s;
+  struct new_args args = rewrite_args_and_env(argv, envp, type, &s);
+  return next(pid, args.argv[0], file_actions, attrp, args.argv, args.env);
 }
 
 // Fallback to execve / execvpe
