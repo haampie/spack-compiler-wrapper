@@ -240,9 +240,6 @@ static char *const *arg_parse_finish(struct state_t const *s,
 
   size_t i = 0;
 
-  // Store ccache and compiler path.
-  size_t offset_ccache = 0;
-
   if (s->has_ccache)
     argv[i++] = s->strings.arr + s->offset_ccache;
 
@@ -283,6 +280,8 @@ static char *const *arg_parse_finish(struct state_t const *s,
   // others
   for (size_t j = 0; j < s->other_flags.n; ++j)
     argv[i++] = s->strings.arr + s->other_flags.offsets[j];
+
+  argv[i] = NULL;
   return argv;
 }
 
@@ -618,9 +617,11 @@ struct new_args rewrite_args_and_env(char *const *argv, char *const *envp,
   // Maybe store ccache path.
   if (type == SPACK_CC || type == SPACK_CXX) {
     char const *ccache = getenv("SPACK_CCACHE_BINARY");
-    if (ccache) {
+    if (ccache != NULL) {
       s->has_ccache = 1;
       s->offset_ccache = string_table_store(&s->strings, ccache);
+    } else {
+      s->has_ccache = 0;
     }
   }
 
@@ -642,17 +643,27 @@ struct new_args rewrite_args_and_env(char *const *argv, char *const *envp,
 
   args.argv = arg_parse_finish(s, type);
   args.env = env_finish(s);
-  return args;
 
-  // char const *test_command = getenv("SPACK_TEST_COMMAND");
-  // if (test_command == NULL)
-  //   return new_argv;
-  // if (strcmp(test_command, "dump-args") == 0) {
-  //   for (char *const *arg = new_argv; *arg != NULL; ++arg)
-  //     puts(*arg);
-  //   exit(0);
-  // }
-  // return new_argv;
+  char const *test_command = getenv("SPACK_TEST_COMMAND");
+  if (test_command == NULL) {
+    return args;
+  } else if (strcmp(test_command, "dump-args") == 0) {
+    for (char *const *arg = args.argv; *arg != NULL; ++arg)
+      puts(*arg);
+    exit(0);
+  } else if (strncmp(test_command, "dump-env-", 9) == 0) {
+    test_command += 9;
+    size_t needle_length = strlen(test_command);
+    for (char *const *env = environ; *env != NULL; ++env) {
+      if (strncmp(*env, test_command, needle_length) == 0 &&
+          (*env)[needle_length] == '=') {
+        puts(*env);
+        exit(0);
+      }
+    }
+  } else {
+    return args;
+  }
 }
 
 static int is_wrapper_enabled(enum executable_t type) {
@@ -662,6 +673,69 @@ static int is_wrapper_enabled(enum executable_t type) {
   if (type == SPACK_LD)
     return getenv("SPACK_LD_DONE") == NULL;
   return getenv("SPACK_CC_DONE") == NULL;
+}
+
+#define SPACK_PATH_MAX 1024
+
+static void maybe_debug(enum executable_t type, struct state_t const *s,
+                        char *const *args_in, char *const *args_out) {
+  if (getenv("SPACK_DEBUG") == NULL)
+    return;
+  char *dir = getenv("SPACK_DEBUG_LOG_DIR");
+  char *id = getenv("SPACK_DEBUG_LOG_ID");
+  if (dir == NULL || id == NULL)
+    return;
+
+  // SPACK_DEBUG_LOG_DIR/spack-cc-$SPACK_DEBUG_LOG_ID.in.log
+  char path_in[SPACK_PATH_MAX];
+
+  // SPACK_DEBUG_LOG_DIR/spack-cc-$SPACK_DEBUG_LOG_ID.out.log
+  char path_out[SPACK_PATH_MAX];
+  size_t dir_len = strlen(dir);
+  size_t id_len = strlen(id);
+  size_t in_length = dir_len + 10 + id_len + 7;
+  size_t out_length = dir_len + 10 + id_len + 8;
+  if (out_length + 1 > SPACK_PATH_MAX)
+    return;
+  memcpy(path_in, dir, dir_len);
+  memcpy(path_in + dir_len, "/spack-cc-", 10);
+  memcpy(path_in + dir_len + 10, id, id_len);
+  memcpy(path_in + dir_len + 10 + id_len, ".in.log", 7);
+  path_in[in_length] = '\0';
+  memcpy(path_out, dir, dir_len);
+  memcpy(path_out + dir_len, "/spack-cc-", 10);
+  memcpy(path_out + dir_len + 10, id, id_len);
+  memcpy(path_out + dir_len + 10 + id_len, ".out.log", 8);
+  path_out[out_length] = '\0';
+
+  FILE *in = fopen(path_in, "a");
+  FILE *out = fopen(path_out, "a");
+  if (in == NULL || out == NULL)
+    return;
+
+  char const *mode =
+      type == SPACK_LD
+          ? "[ld] "
+          : s->mode == SPACK_MODE_AS
+                ? "[as] "
+                : s->mode == SPACK_MODE_CC
+                      ? "[cc] "
+                      : s->mode == SPACK_MODE_CCLD ? "[ccld] " : "[cpp]";
+  fputs(mode, in);
+  for (char *const *arg_in = args_in; *arg_in != NULL; ++arg_in) {
+    fputs(*arg_in, in);
+    fputc(' ', in);
+  }
+  fputc('\n', in);
+  fclose(in);
+
+  fputs(mode, out);
+  for (char *const *arg_out = args_out; *arg_out != NULL; ++arg_out) {
+    fputs(*arg_out, out);
+    fputc(' ', out);
+  }
+  fputc('\n', out);
+  fclose(out);
 }
 
 // The exec* + posix_spawn calls we wrap
@@ -674,6 +748,7 @@ execve(const char *path, char *const *argv, char *const *envp) {
     return next(path, argv, envp);
   struct state_t s;
   struct new_args args = rewrite_args_and_env(argv, envp, type, &s);
+  maybe_debug(type, &s, argv, args.argv);
   return next(args.argv[0], args.argv, args.env);
 }
 
@@ -685,6 +760,7 @@ execvpe(const char *file, char *const *argv, char *const *envp) {
     return next(file, argv, envp);
   struct state_t s;
   struct new_args args = rewrite_args_and_env(argv, envp, type, &s);
+  maybe_debug(type, &s, argv, args.argv);
   return next(args.argv[0], args.argv, args.env);
 }
 
@@ -699,6 +775,7 @@ posix_spawn(pid_t *pid, const char *path,
     return next(pid, path, file_actions, attrp, argv, envp);
   struct state_t s;
   struct new_args args = rewrite_args_and_env(argv, envp, type, &s);
+  maybe_debug(type, &s, argv, args.argv);
   return next(pid, args.argv[0], file_actions, attrp, args.argv, args.env);
 }
 

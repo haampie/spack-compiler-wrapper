@@ -34,8 +34,8 @@ $ ./build.sh
 - [X] `SPACK_INCLUDE_DIRS`
 - [X] `SPACK_LINK_DIRS`
 - [X] `SPACK_TEST_COMMAND=dump-args`
+- [X] `SPACK_TEST_COMMAND=dump-env-*`
+- [X] `SPACK_CCACHE_BINARY`
+- [X] `SPACK_DEBUG=TRUE`
 - [ ] `SPACK_CPPFLAGS`
-- [ ] `SPACK_CCACHE_BINARY`
-- [ ] `SPACK_TEST_COMMAND=dump-env`
-- [ ] `SPACK_DEBUG=TRUE`
 - [ ] `SPACK_LDLIBS`
