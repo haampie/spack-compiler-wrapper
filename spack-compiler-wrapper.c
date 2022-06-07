@@ -555,23 +555,26 @@ static void parse_spack_env(struct state_t *s, enum executable_t type) {
                           "-rpath=", &s->strings, &s->spack_rpath_flags);
     store_delimited_flags(getenv("SPACK_COMPILER_IMPLICIT_RPATHS"), ':',
                           "-rpath=", &s->strings, &s->spack_rpath_flags);
-    // TODO: store_delimited_flags(getenv("SPACK_LDLIBS"), ' ', "-l",
-    // &s->strings, &s->other);
+    // TODO: improve LDLIBS?
+    store_delimited_flags(getenv("SPACK_LDLIBS"), ' ', "-l", &s->strings, &s->spack_lib_flags);
     break;
   case SPACK_CC:
+    store_delimited(getenv("SPACK_CPPFLAGS"), ' ', &s->strings,
+                    &s->spack_compiler_flags);
     store_delimited(getenv("SPACK_CFLAGS"), ' ', &s->strings,
                     &s->spack_compiler_flags);
     break;
   case SPACK_CXX:
+    store_delimited(getenv("SPACK_CPPFLAGS"), ' ', &s->strings,
+                    &s->spack_compiler_flags);
     store_delimited(getenv("SPACK_CXXFLAGS"), ' ', &s->strings,
                     &s->spack_compiler_flags);
     break;
   case SPACK_F77:
-    store_delimited(getenv("SPACK_FFLAGS"), ' ', &s->strings,
-                    &s->spack_compiler_flags);
-    break;
   case SPACK_FC:
     store_delimited(getenv("SPACK_FFLAGS"), ' ', &s->strings,
+                    &s->spack_compiler_flags);
+    store_delimited(getenv("SPACK_CPPFLAGS"), ' ', &s->strings,
                     &s->spack_compiler_flags);
     break;
   }

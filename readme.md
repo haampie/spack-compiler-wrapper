@@ -37,5 +37,5 @@ $ ./build.sh
 - [X] `SPACK_TEST_COMMAND=dump-env-*`
 - [X] `SPACK_CCACHE_BINARY`
 - [X] `SPACK_DEBUG=TRUE`
-- [ ] `SPACK_CPPFLAGS`
-- [ ] `SPACK_LDLIBS`
+- [X] `SPACK_CPPFLAGS`
+- [X] `SPACK_LDLIBS`
