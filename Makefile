@@ -1,4 +1,4 @@
-.PHONY: all clean
+.PHONY: all clean install
 
 SPACK_CFLAGS = -std=gnu99 -fPIC -fvisibility=hidden
 SPACK_LDFLAGS = -Wl,--version-script=./spack-compiler-wrapper.version
