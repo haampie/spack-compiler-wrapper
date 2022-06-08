@@ -39,3 +39,4 @@ $ ./build.sh
 - [X] `SPACK_DEBUG=TRUE`
 - [X] `SPACK_CPPFLAGS`
 - [X] `SPACK_LDLIBS`
+- [X] `SPACK_DTAGS_TO_ADD`
