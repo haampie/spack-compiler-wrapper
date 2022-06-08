@@ -561,8 +561,13 @@ static void store_delimited(char const *str, char delim, struct string_table_t *
 }
 
 static void parse_spack_env(struct state_t *s) {
+    const char *dtags;
     switch (s->type) {
     case SPACK_LD:
+        if ((dtags = getenv("SPACK_DTAGS_TO_ADD")) != NULL)
+            offset_list_push(&s->spack_rpath_flags,
+                             string_table_store(&s->strings, dtags));
+
         store_delimited_flags(getenv("SPACK_LINK_DIRS"), ':', "-L", &s->strings,
                               &s->spack_lib_flags);
         store_delimited_flags(getenv("SPACK_COMPILER_EXTRA_RPATHS"), ':', "-L",
