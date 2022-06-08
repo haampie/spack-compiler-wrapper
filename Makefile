@@ -4,7 +4,9 @@
 SPACK_CFLAGS = -std=gnu99 -fPIC -fvisibility=hidden
 # SPACK_LDFLAGS = -Wl,--version-script=./spack-compiler-wrapper.version
 
-ifeq ($(OS), Darwin)
+OS := $(shell uname)
+
+ifeq ($(OS),Darwin)
   SHLIBEXT = dylib
 else
   SHLIBEXT = so
@@ -19,4 +21,4 @@ spack-compiler-wrapper.$(SHLIBEXT): spack-compiler-wrapper.o
 	$(CC) $(LDFLAGS) $(SPACK_LDFLAGS) -shared -o $@ $< -ldl
 
 clean:
-	rm -f *.o *.so
+	rm -f spack-compiler-wrapper.o spack-compiler-wrapper.$(SHLIBEXT)
